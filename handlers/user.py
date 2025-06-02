@@ -1,37 +1,38 @@
 import os
+from dotenv import load_dotenv
 import json
 from aiogram import Router, Bot
 from aiogram.types import Message
 
 router = Router()
+load_dotenv()
+bot_username = os.getenv("bot_username")
+
 
 def load_config():
-    """Загружает конфиг из admin.json"""
     try:
         with open('admin.json', 'r', encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {'admin': [], 'forum_chat_id': None}
 
+
 @router.message()
 async def handle_user_message(message: Message, bot: Bot):
-    user_messsage = message
     config = load_config()
     admins = config.get('admin', [])
     forum_chat_id = config.get('forum_chat_id')
 
-    # Проверка на наличие настроенного форума
     if not forum_chat_id:
         await message.answer("❌ Форум-чат не настроен администратором")
         return
 
-    # Не реагируем на сообщения от админов
     if str(message.from_user.id) in admins:
         return
 
     has_content = False
 
-    if message.text and message.from_user.username != "mchuinya_bot":
+    if message.text and message.from_user.username != bot_username:
         topic = await bot.create_forum_topic(
             chat_id=forum_chat_id,
             name=f"Предложка от @{message.from_user.username}",
@@ -43,7 +44,7 @@ async def handle_user_message(message: Message, bot: Bot):
             message_thread_id=topic.message_thread_id,
             text=message.text
         )
-    if message.photo and message.from_user.username != "mchuinya_bot":
+    if message.photo and message.from_user.username != bot_username:
         topic = await bot.create_forum_topic(
             chat_id=forum_chat_id,
             name=f"Предложка от @{message.from_user.username}",
@@ -57,7 +58,7 @@ async def handle_user_message(message: Message, bot: Bot):
             caption=message.caption or message.text or ""
         )
 
-    if message.video and message.from_user.username != "mchuinya_bot":
+    if message.video and message.from_user.username != bot_username:
         topic = await bot.create_forum_topic(
             chat_id=forum_chat_id,
             name=f"Предложка от @{message.from_user.username}",
@@ -71,7 +72,7 @@ async def handle_user_message(message: Message, bot: Bot):
             caption=message.caption or message.text or ""
         )
 
-    if message.document and message.from_user.username != "mchuinya_bot":
+    if message.document and message.from_user.username != bot_username:
         topic = await bot.create_forum_topic(
             chat_id=forum_chat_id,
             name=f"Предложка от @{message.from_user.username}",
@@ -84,7 +85,7 @@ async def handle_user_message(message: Message, bot: Bot):
             document=message.document.file_id,
             caption=message.caption or message.text or ""
         )
-    if message.audio and message.from_user.username != "mchuinya_bot":
+    if message.audio and message.from_user.username != bot_username:
         topic = await bot.create_forum_topic(
             chat_id=forum_chat_id,
             name=f"Предложка от @{message.from_user.username}",
@@ -98,7 +99,7 @@ async def handle_user_message(message: Message, bot: Bot):
             caption=message.caption or message.text or ""
         )
 
-    if message.sticker and message.from_user.username != "mchuinya_bot":
+    if message.sticker and message.from_user.username != bot_username:
         topic = await bot.create_forum_topic(
             chat_id=forum_chat_id,
             name=f"Предложка от @{message.from_user.username}",
@@ -111,7 +112,7 @@ async def handle_user_message(message: Message, bot: Bot):
             sticker=message.sticker.file_id
         )
 
-    if message.animation and message.from_user.username != "mchuinya_bot":
+    if message.animation and message.from_user.username != bot_username:
         topic = await bot.create_forum_topic(
             chat_id=forum_chat_id,
             name=f"Предложка от @{message.from_user.username}",
@@ -125,7 +126,7 @@ async def handle_user_message(message: Message, bot: Bot):
             caption=message.caption or message.text or ""
         )
 
-    if message.voice and message.from_user.username != "mchuinya_bot":
+    if message.voice and message.from_user.username != bot_username:
         topic = await bot.create_forum_topic(
             chat_id=forum_chat_id,
             name=f"Предложка от @{message.from_user.id}",
@@ -139,7 +140,7 @@ async def handle_user_message(message: Message, bot: Bot):
             caption=message.caption or message.text or ""
         )
 
-    if message.video_note and message.from_user.username != "mchuinya_bot":
+    if message.video_note and message.from_user.username != bot_username:
         topic = await bot.create_forum_topic(
             chat_id=forum_chat_id,
             name=f"Предложка от @{message.from_user.id}",

@@ -1,8 +1,12 @@
 import os
 import json
-from aiogram import Router, Bot
+from aiogram import Router, Bot, F
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
+
+from keyboards.config_keyboard import *
 
 router = Router()
 
@@ -20,207 +24,137 @@ def load_config():
 
 
 def save_config(config):
-    """Сохранить конфигурацию в файл"""
     with open(ADMIN_FILE, 'w', encoding='utf-8') as file:
         json.dump(config, file, ensure_ascii=False, indent=2)
 
 
 def load_admins():
-    """Загрузить список администраторов (для обратной совместимости)"""
     config = load_config()
     return config.get('admin', [])
 
 
 def save_admins(admin_ids):
-    """Сохранить список администраторов (для обратной совместимости)"""
     config = load_config()
     config['admin'] = admin_ids
     save_config(config)
 
 
 def parse_admin_ids(text):
-    """Парсит строку с id админов, возвращает список строк-чисел"""
     return [i.strip() for i in text.split(',') if i.strip().isdigit()]
+
+
+class AdminStates(StatesGroup):
+    waiting_for_admins = State()
+    waiting_for_forum_chat_id = State()
 
 
 @router.message(CommandStart())
 async def start(message: Message, bot: Bot):
     config = load_config()
-
-    if not config['admin']:
+    if not config['admin'] and not config['forum_chat_id']:
         await message.answer(
-            "В боте не указаны администраторы.\n"
-            "Добавьте их командой:\n"
-            "/add_admins 12345,67890"
-        )
-    elif not config['forum_chat_id']:
-        await message.answer(
-            "Чат с темами не настроен.\n"
-            "1. Создайте супергруппу с режимом форума\n"
-            "2. Добавьте бота как администратора с правами управления темами\n"
-            "3. Укажите ID чата командой:\n"
-            "/set_forum_chat <ID_чата>"
-        )
-    else:
-        await message.answer("Бот готов к работе!")
-
-
-@router.message(Command("add_admins"))
-async def add_admins(message: Message):
-    config = load_config()
-    admins_exist = bool(config['admin'])
-    admins = config.get('admin', [])
-
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.answer(
-            "Пожалуйста, укажите id администраторов через запятую:\n"
-            "/add_admins 12345,67890"
-        )
-        return
-
-    admin_ids = parse_admin_ids(args[1])
-    if not admin_ids:
-        await message.answer("Некорректный формат. Используйте только числа через запятую.")
-        return
-
-    if admins_exist:
-        if str(message.from_user.id) not in admins:
-            await message.answer("Вы не являетесь администратором.")
-            return
-        config['admin'] = admin_ids
-        save_config(config)
-        await message.answer(f"Администраторы обновлены: {', '.join(admin_ids)}")
-    else:
-        config['admin'] = admin_ids
-        save_config(config)
-        await message.answer(f"Администраторы добавлены: {', '.join(admin_ids)}")
+            text="⚠️ Это первый запуск бота пожалуйста укажите администраторов и чат-форум для того что бы начать работу!",
+            reply_markup=full_config_keyboard)
 
     if not config.get('forum_chat_id'):
         await message.answer(
-            "⚠️ Не забудьте настроить чат с темами командой /set_forum_chat"
+            "⚠️ Чат-форум не настроен. Для завершения настройки укажите ID чата",
+            reply_markup=keyboard_only_for_add_themes
         )
 
+    if message.from_user.id not in load_admins():
+        await message.answer("Добро пожаловать в бот предложку, напишите свое предложение")
 
-@router.message(Command("set_forum_chat"))
-async def set_forum_chat(message: Message, bot: Bot):
-    """Установка ID форум-чата"""
+    if message.from_user.id in parse_admin_ids(message.text):
+        pass
+
+
+class AdminStates(StatesGroup):
+    waiting_for_admins = State()
+    waiting_for_forum_chat_id = State()
+
+
+@router.callback_query(F.data == 'add_admins')
+async def add_admins_callback(callback_query: CallbackQuery, state: FSMContext):
+    config = load_config()
+    admins_exist = bool(config.get('admin'))
+    admins = config.get('admin', [])
+
+    await callback_query.answer()
+
+    if admins_exist and str(callback_query.from_user.id) not in admins:
+        await callback_query.message.answer("❌ Вы не являетесь администратором.")
+        return
+
+    await callback_query.message.answer("📝 Введите ID администраторов через запятую:")
+    await state.set_state(AdminStates.waiting_for_admins)
+
+
+@router.message(AdminStates.waiting_for_admins)
+async def process_admins_input(message: Message, state: FSMContext):
+    config = load_config()
+    admin_ids = parse_admin_ids(message.text)
+
+    if not admin_ids:
+        await message.answer("❌ Некорректный формат. Используйте только числа через запятую.")
+        return
+
+    config['admin'] = admin_ids
+    save_config(config)
+    await message.answer(f"✅ Администраторы успешно обновлены:\n{', '.join(admin_ids)}")
+
+    if not config.get('forum_chat_id'):
+        await message.answer(
+            "⚠️ Чат-форум не настроен. Для завершения настройки укажите ID чата",
+            reply_markup=keyboard_only_for_add_themes
+        )
+    await state.clear()
+
+
+@router.callback_query(F.data == 'add_themes')
+async def set_forum_chat_callback(callback_query: CallbackQuery, state: FSMContext):
     config = load_config()
     admins = config.get('admin', [])
 
-    if str(message.from_user.id) not in admins:
-        await message.answer("❌ Вы не являетесь администратором")
+    await callback_query.answer()
+
+    if str(callback_query.from_user.id) not in admins:
+        await callback_query.message.answer("❌ Доступ запрещён. Требуются права администратора.")
         return
 
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.answer("❌ Укажите ID чата: /set_forum_chat <ID_чата>")
-        return
+    await callback_query.message.answer("🌐 Введите ID чата-форума:")
+    await state.set_state(AdminStates.waiting_for_forum_chat_id)
 
-    chat_id = args[1].strip()
+
+@router.message(AdminStates.waiting_for_forum_chat_id)
+async def process_forum_chat_id(message: Message, state: FSMContext):
+    config = load_config()
+    chat_id = message.text.strip()
+
     try:
-        chat = await bot.get_chat(chat_id)
+        chat = await message.bot.get_chat(chat_id)
 
-        # Проверяем, является ли чат форумом
         if not getattr(chat, "is_forum", False):
-            await message.answer("❌ Указанный чат не является форумом")
+            await message.answer("❌ Ошибка: указанный чат не поддерживает темы.")
             return
 
-        # Проверяем права бота в чате
-        admins_list = await bot.get_chat_administrators(chat_id)
-        bot_member = next((m for m in admins_list if m.user.id == bot.id), None)
+        admins_list = await message.bot.get_chat_administrators(chat_id)
+        bot_member = next((m for m in admins_list if m.user.id == message.bot.id), None)
 
         if not bot_member:
-            await message.answer("❌ Бот не является администратором в этом чате")
+            await message.answer("❌ Ошибка: бот не добавлен как администратор.")
             return
 
         if not getattr(bot_member, "can_manage_topics", False):
-            await message.answer("❌ Бот не имеет прав управления темами в этом чате")
+            await message.answer("❌ Ошибка: недостаточно прав для управления темами.")
             return
 
     except Exception as e:
-        await message.answer(f"❌ Ошибка при проверке чата: {str(e)}")
+        await message.answer(f"❌ Ошибка проверки чата:\n{str(e)}")
+        await message.answer("⚠️ Попробуйте еще раз")
         return
 
     config['forum_chat_id'] = chat_id
     save_config(config)
-    await message.answer(f"✅ Чат форума установлен: {chat_id}")
-
-
-@router.message(Command("create_topic"))
-async def create_topic(message: Message, bot: Bot):
-    """Создание новой темы в форум-чате"""
-    config = load_config()
-    admins = config.get('admin', [])
-
-    if str(message.from_user.id) not in admins:
-        await message.answer("❌ Вы не являетесь администратором")
-        return
-
-    if not config.get('forum_chat_id'):
-        await message.answer("❌ Форум-чат не настроен. Используйте /set_forum_chat")
-        return
-
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.answer("❌ Укажите название темы: /create_topic <название>")
-        return
-
-    topic_name = args[1].strip()
-    if not topic_name:
-        await message.answer("❌ Название темы не может быть пустым")
-        return
-
-    try:
-        topic = await bot.create_forum_topic(
-            chat_id=config['forum_chat_id'],
-            name=topic_name,
-            icon_color=7322096  # Синий цвет по умолчанию
-        )
-        await message.answer(f"✅ Тема создана: {topic.name} (ID: {topic.message_thread_id})")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка при создании темы: {str(e)}")
-
-
-@router.message(Command("forum_info"))
-async def forum_info(message: Message, bot: Bot):
-    """Информация о настроенном форум-чате"""
-    config = load_config()
-    admins = config.get('admin', [])
-
-    if str(message.from_user.id) not in admins:
-        await message.answer("❌ Вы не являетесь администратором")
-        return
-
-    if not config.get('forum_chat_id'):
-        await message.answer("❌ Форум-чат не настроен")
-        return
-
-    try:
-        chat = await bot.get_chat(config['forum_chat_id'])
-        info = f"📋 Информация о форум-чате:\n\n"
-        info += f"Название: {chat.title}\n"
-        info += f"ID: {chat.id}\n"
-        info += f"Тип: {'Форум' if getattr(chat, 'is_forum', False) else 'Обычный чат'}\n"
-        info += f"Описание: {chat.description or 'Не указано'}"
-
-        await message.answer(info)
-    except Exception as e:
-        await message.answer(f"❌ Ошибка при получении информации: {str(e)}")
-
-
-@router.message(Command("config"))
-async def show_config(message: Message):
-    """Показать текущую конфигурацию"""
-    config = load_config()
-    admins = config.get('admin', [])
-
-    if str(message.from_user.id) not in admins:
-        await message.answer("❌ Вы не являетесь администратором")
-        return
-
-    info = "⚙️ Текущая конфигурация:\n\n"
-    info += f"Администраторы: {', '.join(admins) if admins else 'Не указаны'}\n"
-    info += f"Форум-чат: {config.get('forum_chat_id', 'Не настроен')}"
-
-    await message.answer(info)
+    await message.answer(f"✅ Чат-форум успешно настроен:\nID: {chat_id}")
+    await state.clear()

@@ -14,6 +14,7 @@ bot = Bot(token=token)
 dp.include_router(start_router)
 dp.include_router(user_router)
 
+
 async def main():
     await dp.start_polling(bot)
 
