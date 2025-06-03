@@ -46,6 +46,8 @@ def parse_admin_ids(text):
 class AdminStates(StatesGroup):
     waiting_for_admins = State()
     waiting_for_forum_chat_id = State()
+    waiting_del_admins = State()
+    confirm_to_del_config = State()
 
 
 @router.message(CommandStart())
@@ -55,23 +57,20 @@ async def start(message: Message, bot: Bot):
         await message.answer(
             text="⚠️ Это первый запуск бота пожалуйста укажите администраторов и чат-форум для того что бы начать работу!",
             reply_markup=full_config_keyboard)
+        return
 
     if not config.get('forum_chat_id'):
         await message.answer(
             "⚠️ Чат-форум не настроен. Для завершения настройки укажите ID чата",
             reply_markup=keyboard_only_for_add_themes
         )
+        return
 
-    if message.from_user.id not in load_admins():
+    admin_ids = [int(i) for i in load_admins()]
+    if message.from_user.id in admin_ids:
+        await message.answer(text=f"Добро пожаловать {message.from_user.username}!", reply_markup=admin_keyboard)
+    else:
         await message.answer("Добро пожаловать в бот предложку, напишите свое предложение")
-
-    if message.from_user.id in parse_admin_ids(message.text):
-        pass
-
-
-class AdminStates(StatesGroup):
-    waiting_for_admins = State()
-    waiting_for_forum_chat_id = State()
 
 
 @router.callback_query(F.data == 'add_admins')
@@ -93,21 +92,24 @@ async def add_admins_callback(callback_query: CallbackQuery, state: FSMContext):
 @router.message(AdminStates.waiting_for_admins)
 async def process_admins_input(message: Message, state: FSMContext):
     config = load_config()
-    admin_ids = parse_admin_ids(message.text)
+    new_admin_ids = parse_admin_ids(message.text)
 
-    if not admin_ids:
+    if not new_admin_ids:
         await message.answer("❌ Некорректный формат. Используйте только числа через запятую.")
         return
 
-    config['admin'] = admin_ids
-    save_config(config)
-    await message.answer(f"✅ Администраторы успешно обновлены:\n{', '.join(admin_ids)}")
+    existing_admins = set(map(int, config['admin']))
+    new_admins = {int(admin_id) for admin_id in new_admin_ids}
 
-    if not config.get('forum_chat_id'):
-        await message.answer(
-            "⚠️ Чат-форум не настроен. Для завершения настройки укажите ID чата",
-            reply_markup=keyboard_only_for_add_themes
-        )
+    merged_admins = existing_admins.union(new_admins)
+    config['admin'] = list(map(str, merged_admins))
+
+    save_config(config)
+    await message.answer(
+        f"✅ Администраторы успешно обновлены:\n"
+        f"Добавлены: {', '.join(map(str, new_admins - existing_admins))}\n"
+        f"Все администраторы: {', '.join(config['admin'])}", reply_markup=admin_keyboard
+    )
     await state.clear()
 
 
@@ -158,3 +160,81 @@ async def process_forum_chat_id(message: Message, state: FSMContext):
     save_config(config)
     await message.answer(f"✅ Чат-форум успешно настроен:\nID: {chat_id}")
     await state.clear()
+
+
+@router.callback_query(F.data == 'del_admin')
+async def delete_admins_callback(callback_query: CallbackQuery, state: FSMContext):
+    admin_ids = load_admins()
+    admins_list = "\n".join([f"{i + 1}. {admin_id}" for i, admin_id in enumerate(admin_ids)])
+    await callback_query.answer()
+    await callback_query.message.answer(
+        f"Список администраторов:\n{admins_list}\n\n"
+        "Введите номер администратора, которого хотите удалить:"
+    )
+    await state.set_state(AdminStates.waiting_del_admins)
+
+
+@router.message(AdminStates.waiting_del_admins)
+async def del_admins_callback(message: Message, state: FSMContext):
+    config = load_config()
+    admin_ids = config['admin']
+    try:
+        idx = int(message.text) - 1
+        if 0 <= idx < len(admin_ids):
+            removed_admin = admin_ids.pop(idx)
+            save_config(config)
+            await message.answer(f"Администратор {removed_admin} удалён.")
+            await state.clear()
+        else:
+            await message.answer("❌ Некорректный номер администратора.")
+    except ValueError:
+        await message.answer("⚠️ Пожалуйста, введите корректный номер (число).")
+
+
+@router.callback_query(F.data == 'get_config_bot')
+async def get_config_bot_callback(callback_query: CallbackQuery, state: FSMContext):
+    config = load_config()
+    await callback_query.answer()
+    await callback_query.message.edit_text(f"Текущая конфигурация бота:\n"
+                                        f"Администаторы: {config['admin']}\n"
+                                        f"Чат ID: {config['forum_chat_id']}\n", reply_markup=admin_keyboard)
+
+
+@router.callback_query(F.data == 'del_config_bot')
+async def del_config_bot_callback(callback_query: CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    await callback_query.message.edit_text(text="Вы уверены что хотите сбросить конфиг?", reply_markup=approved_keyboard)
+
+
+@router.callback_query(F.data == 'del_confirm_config_bot')
+async def del_confirm_config_callback(callback_query: CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    load_config()
+    os.remove(ADMIN_FILE)
+    await callback_query.message.edit_text(text="Конфиг удален, настройте бота еще раз для начала работы напишите /start")
+
+
+@router.callback_query(F.data == 'del_notconfirm_config_bot')
+async def del_notconfirmconfig_callback(callback_query: CallbackQuery, state: FSMContext):
+    await callback_query.answer()
+    await callback_query.message.answer(text="Действие отменено", reply_markup=admin_keyboard)
+    await state.clear()
+
+
+@router.callback_query(F.data == 'del_forum_chat')
+async def del_forum_chat_callback(callback_query: CallbackQuery):
+    config = load_config()
+    admins = config.get('admin', [])
+
+    if str(callback_query.from_user.id) not in admins:
+        await callback_query.answer("❌ Требуются права администратора")
+        return
+
+    config['forum_chat_id'] = None
+    save_config(config)
+
+    await callback_query.answer()
+    await callback_query.message.edit_text(
+        "✅ ID чата-форума успешно удалён",
+        reply_markup=admin_keyboard
+    )
